@@ -665,6 +665,7 @@
         <div class="tab" onclick="showModel(1)">모델 2: 4번째 손가락 (통합)</div>
         <div class="tab" onclick="showModel(2)">모델 3: TT+IP 평균값 (dorsal)</div>
         <div class="tab" onclick="showModel(3)">모델 4: 4번째 손가락 (dorsal)</div>
+        <div class="tab" onclick="showModel(4)">모델 5: 추정 공식 (사용자 정의)</div>
       </div>
       
       <!-- 모델 컨테이너 -->
@@ -772,6 +773,42 @@
             <button type="button" onclick="calculateModel4()">계산</button>
           </form>
           <div class="result" id="result4">예상 키: - cm</div>
+        </div>
+
+        <!-- 모델 5: 추정 공식 (사용자 정의) 모델 -->
+        <div class="model-container" id="model5">
+          <h3 class="model-title">모델 5: 추정 공식 (사용자 정의) 모델</h3>
+          <p class="model-stats">설명력(R): 0.690 | MAE: 4.85</p>
+          <form id="model5-form">
+            <div class="form-group">
+              <label for="select_calculation_type">계산 방식:</label>
+              <select id="select_calculation_type" style="width: 100%; padding: 10px 12px; font-size: 1.05em; border: 1px solid var(--border-color); border-radius: 4px; background-color: var(--input-bg); color: var(--text-color);">
+                <option value="dorsal_tt">H = 67.6 + 27.2 dorsal_tt</option>
+                <option value="dorsal_ip">H = 60.7 + 25.9 dorsal_ip</option>
+                <option value="palmar_tt">H = 76.9 + 24.1 palmar_tt</option>
+                <option value="palmar_ip">H = 77.7 + 21.6 palmar_ip</option>
+                <option value="age">H = 174.5 - 0.2 age</option>
+                <option value="dorsal">H = 59.4 + 27.8 dorsal</option>
+                <option value="palmar">H = 74.5 + 23.5 palmar</option>
+                <option value="custom">사용자 정의</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="measurement_value">측정값 (mm):</label>
+              <input type="number" step="any" id="measurement_value">
+            </div>
+            <div class="form-group">
+              <label for="r_squared">R² 값:</label>
+              <input type="number" step="any" id="r_squared" value="0.462">
+            </div>
+            <div class="form-group">
+              <label for="standard_error">표준 오차 (SE):</label>
+              <input type="number" step="any" id="standard_error" value="3.202">
+            </div>
+            <button type="button" onclick="calculateModel5()">계산</button>
+          </form>
+          <div class="result" id="result5">예상 키: - cm</div>
+          <div id="model5_additional_info" style="text-align: center; margin-top: 8px; font-size: 0.8em; color: var(--secondary-text);"></div>
         </div>
       </div>
     </div>
@@ -1226,13 +1263,21 @@
             measurementData.original = rowData;
             
             // 모델별 계산
-            const heights = calculateHeights(measurementData);
+            const calculationType = document.getElementById('select_calculation_type').value;
+            const heights = calculateHeights(measurementData, calculationType);
+            
+            // 모델 5 정보 저장 - 현재 선택된 계산 방식 사용
+            const model5Result = calculateModel5Default(measurementData.rt_tt_4th_dorsal, calculationType);
             
             const resultItem = {
               rowData: rowData,
               heights: heights,
               measurementData: measurementData,
-              displayIndex: processedIndex // 원본 데이터의 순서를 기억
+              displayIndex: processedIndex, // 원본 데이터의 순서를 기억
+              model5Type: model5Result.calculationType,
+              model5Value: model5Result.measurementValue,
+              model5RSquared: model5Result.r2,
+              model5SE: model5Result.se
             };
             
             // 디버깅 로그: 결과 아이템 확인
@@ -1289,6 +1334,14 @@
         // 원본 데이터의 인덱스를 사용하여 피험자 번호 표시
         const displayIndex = result.displayIndex || (index + 1);
         
+        // 모델 5 정보 저장
+        if (heights.model5Info) {
+          result.model5Type = heights.model5Info.calculationType;
+          result.model5Value = heights.model5Info.measurementValue;
+          result.model5RSquared = heights.model5Info.r2;
+          result.model5SE = heights.model5Info.se;
+        }
+        
         resultsHTML += `
           <div class="subject-card">
             <div class="subject-header">
@@ -1326,6 +1379,11 @@
                   <td>모델 4:</td>
                   <td>${heights.model4.split('<strong>')[1].split('</strong>')[0]}</td>
                   ${actualHeight ? `<td class="error-value" style="color: ${Math.abs(parseFloat(heights.model4.split('<strong>')[1].split('</strong>')[0]) - parseFloat(actualHeight)) <= 5 ? 'var(--success-color)' : 'var(--error-color)'};">오차: ${(parseFloat(heights.model4.split('<strong>')[1].split('</strong>')[0]) - parseFloat(actualHeight)).toFixed(2)}cm</td>` : '<td></td>'}
+                </tr>
+                <tr>
+                  <td>모델 5:</td>
+                  <td>${heights.model5.split('<strong>')[1].split('</strong>')[0]}</td>
+                  ${actualHeight ? `<td class="error-value" style="color: ${Math.abs(parseFloat(heights.model5.split('<strong>')[1].split('</strong>')[0]) - parseFloat(actualHeight)) <= 5 ? 'var(--success-color)' : 'var(--error-color)'};">오차: ${(parseFloat(heights.model5.split('<strong>')[1].split('</strong>')[0]) - parseFloat(actualHeight)).toFixed(2)}cm</td>` : '<td></td>'}
                 </tr>
               </table>
             </div>
@@ -1379,78 +1437,60 @@
           document.getElementById('tt_4th_dorsal_m4').value = data.rt_tt_4th_dorsal;
           document.getElementById('ip_4th_dorsal_m4').value = data.rt_ip_4th_dorsal;
           
-          // 선택된 모델에 따라 계산 버튼 클릭
-          if (currentModelIndex === 0) {
-            calculateModel1();
-          } else if (currentModelIndex === 1) {
-            calculateModel2();
-          } else if (currentModelIndex === 2) {
-            calculateModel3();
-          } else if (currentModelIndex === 3) {
-            calculateModel4();
+          // 모델 5 필드 채우기 (저장된 계산 유형 사용)
+          if (result.model5Type) {
+            document.getElementById('select_calculation_type').value = result.model5Type;
+          } else {
+            document.getElementById('select_calculation_type').value = 'dorsal_tt';
           }
-        } else {
-          // 원본 데이터로부터 계산
-          const rowData = result.rowData;
-          const getValue = (obj, fieldName) => {
-            for (const key in obj) {
-              if (key.toLowerCase() === fieldName.toLowerCase()) {
-                // 쉼표(,)를 소수점(.)으로 변경하여 처리
-                const value = obj[key] ? String(obj[key]).replace(/,/g, '.') : '0';
-                return parseFloat(value) || 0;
+          
+          // 계산 유형에 맞는 측정값 설정
+          const calculationType = document.getElementById('select_calculation_type').value;
+          let measurementValue = data.rt_tt_4th_dorsal; // 기본값
+          
+          if (calculationType === "dorsal_tt") {
+            measurementValue = data.rt_tt_4th_dorsal;
+          } else if (calculationType === "dorsal_ip") {
+            measurementValue = data.rt_ip_4th_dorsal;
+          } else if (calculationType === "palmar_tt") {
+            measurementValue = data.original ? data.original['UT_RT_TT_4th(palmar)'] || data.rt_tt_4th_dorsal : data.rt_tt_4th_dorsal;
+          } else if (calculationType === "palmar_ip") {
+            measurementValue = data.original ? data.original['UT_RT_IP_4th(palmar)'] || data.rt_ip_4th_dorsal : data.rt_ip_4th_dorsal;
+          } else if (calculationType === "age") {
+            // 나이 값 사용 (기본값은 25)
+            // 문자열에서 숫자만 추출 (예: '50대' -> 50)
+            let ageValue = 25; // 기본값
+            
+            if (data.original && data.original['age']) {
+              const ageStr = String(data.original['age']);
+              // 숫자만 추출
+              const ageMatch = ageStr.match(/\d+/);
+              if (ageMatch) {
+                ageValue = parseInt(ageMatch[0], 10);
               }
             }
-            return 0;
-          };
+            
+            measurementValue = ageValue;
+          } else if (calculationType === "dorsal") {
+            measurementValue = data.rt_tt_4th_dorsal;
+          } else if (calculationType === "palmar") {
+            measurementValue = data.original ? data.original['UT_RT_TT_4th(palmar)'] || data.rt_tt_4th_dorsal : data.rt_tt_4th_dorsal;
+          }
           
-          // 필요한 모든 값 계산
-          const rt_tt_2nd = (getValue(rowData, 'UT_RT_TT_2nd(dorsal)') + getValue(rowData, 'UT_RT_TT_2nd(palmar)')) / 2;
-          const rt_tt_3rd = (getValue(rowData, 'UT_RT_TT_3rd(dorsal)') + getValue(rowData, 'UT_RT_TT_3rd(palmar)')) / 2;
-          const rt_tt_4th = (getValue(rowData, 'UT_RT_TT_4th(dorsal)') + getValue(rowData, 'UT_RT_TT_4th(palmar)')) / 2;
+          document.getElementById('measurement_value').value = measurementValue;
           
-          const lt_tt_2nd = (getValue(rowData, 'UT_LT_TT_2nd(dorsal)') + getValue(rowData, 'UT_LT_TT_2nd(palmar)')) / 2;
-          const lt_tt_3rd = (getValue(rowData, 'UT_LT_TT_3rd(dorsal)') + getValue(rowData, 'UT_LT_TT_3rd(palmar)')) / 2;
-          const lt_tt_4th = (getValue(rowData, 'UT_LT_TT_4th(dorsal)') + getValue(rowData, 'UT_LT_TT_4th(palmar)')) / 2;
+          // R²와 SE 값 설정
+          if (result.model5RSquared) {
+            document.getElementById('r_squared').value = result.model5RSquared;
+          } else {
+            document.getElementById('r_squared').value = 0.462; // 기본값
+          }
           
-          const rt_ip_2nd = (getValue(rowData, 'UT_RT_IP_2nd(dorsal)') + getValue(rowData, 'UT_RT_IP_2nd(palmar)')) / 2;
-          const rt_ip_3rd = (getValue(rowData, 'UT_RT_IP_3rd(dorsal)') + getValue(rowData, 'UT_RT_IP_3rd(palmar)')) / 2;
-          const rt_ip_4th = (getValue(rowData, 'UT_RT_IP_4th(dorsal)') + getValue(rowData, 'UT_RT_IP_4th(palmar)')) / 2;
-          
-          const lt_ip_2nd = (getValue(rowData, 'UT_LT_IP_2nd(dorsal)') + getValue(rowData, 'UT_LT_IP_2nd(palmar)')) / 2;
-          const lt_ip_3rd = (getValue(rowData, 'UT_LT_IP_3rd(dorsal)') + getValue(rowData, 'UT_LT_IP_3rd(palmar)')) / 2;
-          const lt_ip_4th = (getValue(rowData, 'UT_LT_IP_4th(dorsal)') + getValue(rowData, 'UT_LT_IP_4th(palmar)')) / 2;
-          
-          const tt_2nd_avg = (rt_tt_2nd + lt_tt_2nd) / 2;
-          const tt_3rd_avg = (rt_tt_3rd + lt_tt_3rd) / 2;
-          const tt_4th_avg = (rt_tt_4th + lt_tt_4th) / 2;
-          
-          const ip_2nd_avg = (rt_ip_2nd + lt_ip_2nd) / 2;
-          const ip_3rd_avg = (rt_ip_3rd + lt_ip_3rd) / 2;
-          const ip_4th_avg = (rt_ip_4th + lt_ip_4th) / 2;
-          
-          // 모델 1 필드 채우기
-          document.getElementById('tt_2nd_avg').value = tt_2nd_avg;
-          document.getElementById('tt_3rd_avg').value = tt_3rd_avg;
-          document.getElementById('tt_4th_avg').value = tt_4th_avg;
-          document.getElementById('ip_2nd_avg').value = ip_2nd_avg;
-          document.getElementById('ip_3rd_avg').value = ip_3rd_avg;
-          document.getElementById('ip_4th_avg').value = ip_4th_avg;
-          
-          // 모델 2 필드 채우기
-          document.getElementById('tt_4th_avg_m2').value = tt_4th_avg;
-          document.getElementById('ip_4th_avg_m2').value = ip_4th_avg;
-          
-          // 모델 3 필드 채우기 (dorsal 값만 사용)
-          document.getElementById('tt_2nd_dorsal').value = rt_tt_2nd_dorsal;
-          document.getElementById('tt_3rd_dorsal').value = rt_tt_3rd_dorsal;
-          document.getElementById('tt_4th_dorsal').value = rt_tt_4th_dorsal;
-          document.getElementById('ip_2nd_dorsal').value = rt_ip_2nd_dorsal;
-          document.getElementById('ip_3rd_dorsal').value = rt_ip_3rd_dorsal;
-          document.getElementById('ip_4th_dorsal').value = rt_ip_4th_dorsal;
-          
-          // 모델 4 필드 채우기 (dorsal 값만 사용)
-          document.getElementById('tt_4th_dorsal_m4').value = rt_tt_4th_dorsal;
-          document.getElementById('ip_4th_dorsal_m4').value = rt_ip_4th_dorsal;
+          if (result.model5SE) {
+            document.getElementById('standard_error').value = result.model5SE;
+          } else {
+            document.getElementById('standard_error').value = 3.202; // 기본값
+          }
           
           // 선택된 모델에 따라 계산 버튼 클릭
           if (currentModelIndex === 0) {
@@ -1461,6 +1501,8 @@
             calculateModel3();
           } else if (currentModelIndex === 3) {
             calculateModel4();
+          } else if (currentModelIndex === 4) {
+            calculateModel5();
           }
         }
       }
@@ -1518,7 +1560,7 @@
     }
     
     // 모든 모델의 키 계산
-    function calculateHeights(data) {
+    function calculateHeights(data, calculationTypeParam) {
       // 모델 1: TT + IP 평균값 모델
       const model1 = (() => {
         // 원래 수식:
@@ -1611,12 +1653,55 @@
         };
       })();
       
+      // 모델 5: 추정 공식 (사용자 정의) 모델
+      // 계산 유형 결정 (파일 처리 시에는 매개변수로 전달된 값 사용, 직접 계산 시에는 UI 요소 사용)
+      const calculationType = calculationTypeParam || (document.getElementById('select_calculation_type') ? document.getElementById('select_calculation_type').value : 'dorsal_tt');
+      
+      // 계산 유형에 따라 적절한 측정값 선택
+      let measurementValue = data.rt_tt_4th_dorsal; // 기본값은 dorsal tt
+      
+      if (calculationType === "dorsal_tt") {
+        measurementValue = data.rt_tt_4th_dorsal;
+      } else if (calculationType === "dorsal_ip") {
+        measurementValue = data.rt_ip_4th_dorsal;
+      } else if (calculationType === "palmar_tt") {
+        // palmar 값을 직접 사용 (data 객체에 있는 경우)
+        measurementValue = data.original ? data.original['UT_RT_TT_4th(palmar)'] || data.rt_tt_4th_dorsal : data.rt_tt_4th_dorsal;
+      } else if (calculationType === "palmar_ip") {
+        // palmar 값을 직접 사용 (data 객체에 있는 경우)
+        measurementValue = data.original ? data.original['UT_RT_IP_4th(palmar)'] || data.rt_ip_4th_dorsal : data.rt_ip_4th_dorsal;
+      } else if (calculationType === "age") {
+        // 나이 값 사용 (기본값은 25)
+        measurementValue = data.original ? data.original['age'] || 25 : 25;
+      } else if (calculationType === "dorsal") {
+        measurementValue = data.rt_tt_4th_dorsal;
+      } else if (calculationType === "palmar") {
+        // palmar 값을 직접 사용 (data 객체에 있는 경우)
+        measurementValue = data.original ? data.original['UT_RT_TT_4th(palmar)'] || data.rt_tt_4th_dorsal : data.rt_tt_4th_dorsal;
+      } else {
+        // 사용자 정의 - 기본값 사용
+        measurementValue = data.rt_tt_4th_dorsal;
+      }
+      
+      const model5Result = calculateModel5Default(measurementValue, calculationType);
+      const model5 = {
+        exactValue: model5Result.height,
+        minValue: model5Result.height - model5Result.se,
+        maxValue: model5Result.height + model5Result.se,
+        formatted: `예상 키: ${(model5Result.height - model5Result.se).toFixed(2)} ~ <strong>${model5Result.height.toFixed(2)}</strong> ~ ${(model5Result.height + model5Result.se).toFixed(2)} cm`,
+        calculationType: model5Result.calculationType,
+        measurementValue: model5Result.measurementValue,
+        r2: model5Result.r2,
+        se: model5Result.se
+      };
+      
       // 모든 모델의 정확한 값을 저장 (다운로드용)
       const exactValues = {
         model1: model1.exactValue.toFixed(2),
         model2: model2.exactValue.toFixed(2),
         model3: model3.exactValue.toFixed(2),
-        model4: model4.exactValue.toFixed(2)
+        model4: model4.exactValue.toFixed(2),
+        model5: model5.exactValue.toFixed(2)
       };
       
       return {
@@ -1624,7 +1709,72 @@
         model2: model2.formatted,
         model3: model3.formatted,
         model4: model4.formatted,
-        exactValues: exactValues
+        model5: model5.formatted,
+        exactValues: exactValues,
+        model5Info: {
+          calculationType: model5.calculationType,
+          measurementValue: model5.measurementValue,
+          r2: model5.r2,
+          se: model5.se
+        }
+      };
+    }
+    
+    // 모델 5의 기본 계산 함수 (엑셀 처리 시 사용)
+    function calculateModel5Default(measurementValue, calculationType) {
+      let H = 0;
+      let actualR2 = 0.462;
+      let actualSE = 3.202;
+      
+      // 측정값이 숫자인지 확인하고 변환
+      const numericValue = parseFloat(measurementValue) || 0;
+      
+      if (calculationType === "dorsal_tt") {
+        // dorsal_tt 공식
+        H = 67.6 + 27.2 * numericValue;
+        actualR2 = 0.462;
+        actualSE = 3.202;
+      } else if (calculationType === "dorsal_ip") {
+        // dorsal_ip 공식
+        H = 60.7 + 25.9 * numericValue;
+        actualR2 = 0.454;
+        actualSE = 3.105;
+      } else if (calculationType === "palmar_tt") {
+        // palmar_tt 공식
+        H = 76.9 + 24.1 * numericValue;
+        actualR2 = 0.334;
+        actualSE = 3.707;
+      } else if (calculationType === "palmar_ip") {
+        // palmar_ip 공식
+        H = 77.7 + 21.6 * numericValue;
+        actualR2 = 0.322;
+        actualSE = 3.418;
+      } else if (calculationType === "age") {
+        // age 공식
+        H = 174.5 - 0.2 * numericValue;
+        actualR2 = 0.117;
+        actualSE = 0.070;
+      } else if (calculationType === "dorsal") {
+        // dorsal 공식
+        H = 59.4 + 27.8 * numericValue;
+        actualR2 = 0.479;
+        actualSE = 3.165;
+      } else if (calculationType === "palmar") {
+        // palmar 공식
+        H = 74.5 + 23.5 * numericValue;
+        actualR2 = 0.337;
+        actualSE = 3.601;
+      } else {
+        // 사용자 정의 (직접 계산)
+        H = 80 + 10 * numericValue;
+      }
+      
+      return {
+        height: H,
+        se: actualSE,
+        calculationType: calculationType,
+        measurementValue: numericValue,
+        r2: actualR2
       };
     }
     
@@ -1645,7 +1795,9 @@
         "모델 1 예측 키(cm)", "모델 1 오차(cm)",
         "모델 2 예측 키(cm)", "모델 2 오차(cm)",
         "모델 3 예측 키(cm)", "모델 3 오차(cm)",
-        "모델 4 예측 키(cm)", "모델 4 오차(cm)"
+        "모델 4 예측 키(cm)", "모델 4 오차(cm)",
+        "모델 5 예측 키(cm)", "모델 5 오차(cm)",
+        "모델 5 계산 타입", "모델 5 측정값(mm)", "모델 5 R²", "모델 5 SE"
       ];
       
       // 데이터 행 생성
@@ -1659,6 +1811,7 @@
         const error2 = actualHeight > 0 ? (parseFloat(heights.model2) - actualHeight).toFixed(2) : "-";
         const error3 = actualHeight > 0 ? (parseFloat(heights.model3) - actualHeight).toFixed(2) : "-";
         const error4 = actualHeight > 0 ? (parseFloat(heights.model4) - actualHeight).toFixed(2) : "-";
+        const error5 = actualHeight > 0 && heights.model5 ? (parseFloat(heights.model5) - actualHeight).toFixed(2) : "-";
         
         return [
           index + 1,
@@ -1673,7 +1826,13 @@
           heights.model3,
           error3,
           heights.model4,
-          error4
+          error4,
+          heights.model5 || "-",
+          error5,
+          result.model5Type || "dorsal_tt",
+          result.model5Value ? result.model5Value.toFixed(2) : "-",
+          result.model5RSquared ? result.model5RSquared.toFixed(3) : "0.462",
+          result.model5SE ? result.model5SE.toFixed(3) : "3.202"
         ];
       });
       
@@ -1697,7 +1856,13 @@
         {wch: 15}, // 모델 3 예측 키
         {wch: 15}, // 모델 3 오차
         {wch: 15}, // 모델 4 예측 키
-        {wch: 15}  // 모델 4 오차
+        {wch: 15}, // 모델 4 오차
+        {wch: 15}, // 모델 5 예측 키
+        {wch: 15}, // 모델 5 오차
+        {wch: 15}, // 모델 5 계산 타입
+        {wch: 15}, // 모델 5 측정값
+        {wch: 10}, // 모델 5 R²
+        {wch: 10}  // 모델 5 SE
       ];
       
       ws['!cols'] = wscols;
@@ -1771,6 +1936,98 @@
           ${errorHtml}
           <span>예상 키: <span style="color: var(--text-color);">${minHeight.toFixed(2)} ~ <strong style="color: var(--text-color); font-size: 1.1em;">${H.toFixed(2)}</strong> ~ ${maxHeight.toFixed(2)} cm</span></span>
         </div>`;
+    }
+
+    // 모델 5: 추정 공식 (사용자 정의) 모델 계산 함수
+    function calculateModel5() {
+      const measurementValue = parseFloat(document.getElementById("measurement_value").value) || 0;
+      const rSquared = parseFloat(document.getElementById("r_squared").value) || 0.462;
+      const standardError = parseFloat(document.getElementById("standard_error").value) || 3.202;
+      const calculationType = document.getElementById("select_calculation_type").value;
+      
+      // 계산 타입에 따른 공식 적용
+      let H = 0;
+      let actualR2 = rSquared;
+      let actualSE = standardError;
+      
+      if (calculationType === "dorsal_tt") {
+        // dorsal_tt 공식
+        H = 67.6 + 27.2 * measurementValue;
+        actualR2 = 0.462;
+        actualSE = 3.202;
+      } else if (calculationType === "dorsal_ip") {
+        // dorsal_ip 공식
+        H = 60.7 + 25.9 * measurementValue;
+        actualR2 = 0.454;
+        actualSE = 3.105;
+      } else if (calculationType === "palmar_tt") {
+        // palmar_tt 공식
+        H = 76.9 + 24.1 * measurementValue;
+        actualR2 = 0.334;
+        actualSE = 3.707;
+      } else if (calculationType === "palmar_ip") {
+        // palmar_ip 공식
+        H = 77.7 + 21.6 * measurementValue;
+        actualR2 = 0.322;
+        actualSE = 3.418;
+      } else if (calculationType === "age") {
+        // age 공식
+        H = 174.5 - 0.2 * measurementValue;
+        actualR2 = 0.117;
+        actualSE = 0.070;
+      } else if (calculationType === "dorsal") {
+        // dorsal 공식
+        H = 59.4 + 27.8 * measurementValue;
+        actualR2 = 0.479;
+        actualSE = 3.165;
+      } else if (calculationType === "palmar") {
+        // palmar 공식
+        H = 74.5 + 23.5 * measurementValue;
+        actualR2 = 0.337;
+        actualSE = 3.601;
+      } else {
+        // 사용자 정의 (직접 계산)
+        H = 80 + 10 * measurementValue;
+      }
+      
+      // R² 및 SE 값 업데이트 (사용자가 수정했을 경우 제외)
+      if (calculationType !== "custom") {
+        document.getElementById("r_squared").value = actualR2;
+        document.getElementById("standard_error").value = actualSE;
+      }
+      
+      // 표준 오차를 이용한 범위 계산
+      const minHeight = H - actualSE;
+      const maxHeight = H + actualSE;
+      
+      // 사용자 키 입력 확인
+      const userHeight = parseFloat(document.getElementById("user_height").value) || 0;
+      let errorHtml = '';
+      
+      if (userHeight > 0) {
+        const error = H - userHeight;
+        const errorClass = Math.abs(error) <= actualSE ? 'green' : 'red';
+        errorHtml = `<span class="${errorClass}">오차: ${error.toFixed(2)}cm</span>`;
+      }
+
+      // 결과 표시 (계산 타입과 측정값, R², SE 정보 포함)
+      document.getElementById("result5").innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          ${errorHtml}
+          <span>예상 키: <span style="color: var(--text-color);">${minHeight.toFixed(2)} ~ <strong style="color: var(--text-color); font-size: 1.1em;">${H.toFixed(2)}</strong> ~ ${maxHeight.toFixed(2)} cm</span></span>
+        </div>`;
+      
+      document.getElementById("model5_additional_info").innerHTML = 
+        `계산 타입: ${calculationType}, 측정값: ${measurementValue.toFixed(2)}mm, R²: ${actualR2.toFixed(3)}, SE: ${actualSE.toFixed(3)}`;
+        
+      // 모델 5 결과 반환 (displayAllResults 함수에서 사용)
+      return {
+        height: H,
+        se: actualSE,
+        calculationType: calculationType,
+        measurementValue: measurementValue,
+        r2: actualR2
+      };
     }
   </script>
 </body>
